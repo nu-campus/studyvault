@@ -1,0 +1,63 @@
+name: Auto-release APK
+
+# How this works:
+# 1. You drop a new APK into the apk-drop/ folder (via git push, or
+#    GitHub's web "Add file" button) and name it with a version, e.g.
+#    apk-drop/studyvault-1.4.0.apk
+# 2. This workflow notices the push, creates a GitHub Release tagged
+#    with that version, attaches the APK to it, and then removes the
+#    file from the branch — the APK only lives in Releases from then on,
+#    which is what the download page reads from.
+#
+# You never touch the Releases page by hand.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apk-drop/**.apk"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Locate the dropped APK
+        id: apk
+        run: |
+          FILE=$(find apk-drop -maxdepth 1 -name "*.apk" | sort | tail -n 1)
+          if [ -z "$FILE" ]; then
+            echo "No APK found in apk-drop/, nothing to do."
+            exit 1
+          fi
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+
+          BASENAME=$(basename "$FILE" .apk)
+          # Pull a semantic-looking version (1.2.3) out of the filename if present,
+          # otherwise fall back to a timestamp so releases never collide.
+          VERSION=$(echo "$BASENAME" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1)
+          if [ -z "$VERSION" ]; then
+            VERSION=$(date +%Y%m%d.%H%M)
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create release and attach APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.apk.outputs.version }}
+          name: StudyVault v${{ steps.apk.outputs.version }}
+          files: ${{ steps.apk.outputs.file }}
+          generate_release_notes: true
+
+      - name: Remove the APK from the branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm "${{ steps.apk.outputs.file }}"
+          git commit -m "chore: publish v${{ steps.apk.outputs.version }} to Releases"
+          git push
